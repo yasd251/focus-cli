@@ -34,6 +34,8 @@ class CliTests(unittest.TestCase):
         code, stdout, stderr = self.run_cli(["--help"])
         self.assertEqual(code, 0)
         self.assertIn("focus start <minutes> [options]", stdout)
+        self.assertIn("focus pause", stdout)
+        self.assertIn("focus resume", stdout)
         self.assertIn("focus stop", stdout)
         self.assertIn("focus profile", stdout)
         self.assertIn("--title", stdout)
@@ -54,6 +56,13 @@ class CliTests(unittest.TestCase):
         code, _, stderr = self.run_cli(["profile", "extra"])
         self.assertEqual(code, 2)
         self.assertIn("profile command does not accept arguments", stderr)
+
+    def test_pause_and_resume_arguments_exit_two(self) -> None:
+        for command in ("pause", "resume"):
+            with self.subTest(command=command):
+                code, _, stderr = self.run_cli([command, "now"])
+                self.assertEqual(code, 2)
+                self.assertIn("does not accept arguments", stderr)
 
     def test_duration_validation(self) -> None:
         invalid = ["zero", "-20", "0", "1.5", "60m", "1441"]
@@ -90,6 +99,60 @@ class CliTests(unittest.TestCase):
         code, stdout, stderr = self.run_cli(["stop"])
         self.assertEqual(code, 0)
         self.assertEqual(stdout, "No focus session is currently active.\n")
+        self.assertEqual(stderr, "")
+
+    def test_pause_and_resume_without_a_session_are_informational(self) -> None:
+        code, stdout, stderr = self.run_cli(["pause"])
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "No focus session is currently active.\n")
+        self.assertEqual(stderr, "")
+
+        code, stdout, stderr = self.run_cli(["resume"])
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "No paused focus session to resume.\n")
+        self.assertEqual(stderr, "")
+
+    def test_pause_then_resume_preserves_the_countdown(self) -> None:
+        storage = FocusStorage(self.path)
+        storage.initialize()
+        created = storage.create_session(25, "Write report", 100).created
+
+        with patch("focus_cli.cli.time.time", return_value=220):
+            code, stdout, stderr = self.run_cli(["pause"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Focus session paused.", stdout)
+        self.assertIn("Focused for: 2m", stdout)
+        self.assertIn("Remaining:   23m 0s", stdout)
+        self.assertIn("focus resume", stdout)
+        self.assertEqual(stderr, "")
+        self.assertEqual(storage.get_active().status, "paused")
+
+        with patch("focus_cli.cli.time.time", return_value=520):
+            with patch.object(cli.TimerDisplay, "run", return_value=None):
+                code, stdout, stderr = self.run_cli(["resume"])
+
+        resumed = storage.get_active()
+        self.assertEqual(code, 0)
+        self.assertIn("Timer display closed", stdout)
+        self.assertEqual(stderr, "")
+        self.assertEqual(resumed.status, "active")
+        self.assertEqual(resumed.planned_end_at, created.planned_end_at + 300)
+        self.assertEqual(resumed.focused_seconds_at(520), 120)
+
+    def test_profile_shows_paused_session_without_recovering_it(self) -> None:
+        storage = FocusStorage(self.path)
+        storage.initialize()
+        storage.create_session(1, "Paused work", 100)
+        storage.pause_active(120)
+
+        with patch("focus_cli.cli.time.time", return_value=10_000):
+            code, stdout, stderr = self.run_cli(["profile"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("PAUSED", stdout)
+        self.assertIn("20s / 1m", stdout)
+        self.assertNotIn("Recovered completed session", stdout)
         self.assertEqual(stderr, "")
 
     def test_start_persists_before_display_and_ctrl_c_style_close_keeps_active(self) -> None:

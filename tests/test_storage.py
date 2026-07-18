@@ -101,13 +101,101 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(result.session.status, "completed")
         self.assertEqual(result.session.xp_awarded, 2)
 
+    def test_pause_freezes_remaining_time_and_resume_extends_deadline(self) -> None:
+        created = self.storage.create_session(10, "Deep work", 100).created
+
+        paused = self.storage.pause_active(220)
+        session = paused.paused
+
+        self.assertEqual(session.status, "paused")
+        self.assertEqual(session.focused_seconds_at(500), 120)
+        self.assertEqual(session.remaining_seconds_at(500), 480)
+        self.assertIsNone(self.storage.recover_expired(10_000))
+        self.assertEqual(self.storage.total_xp(), 0)
+
+        resumed = self.storage.resume_paused(500).resumed
+        self.assertEqual(resumed.status, "active")
+        self.assertEqual(resumed.planned_end_at, created.planned_end_at + 280)
+        self.assertEqual(resumed.paused_seconds, 280)
+        self.assertEqual(resumed.focused_seconds_at(500), 120)
+
+    def test_repeated_pauses_are_excluded_from_stopped_session_xp(self) -> None:
+        self.storage.create_session(10, None, 100)
+        self.storage.pause_active(220)
+        self.storage.resume_paused(520)
+        self.storage.pause_active(640)
+        self.storage.resume_paused(700)
+
+        result = self.storage.stop_active(820)
+
+        self.assertEqual(result.session.status, "stopped")
+        self.assertEqual(result.session.actual_seconds, 360)
+        self.assertEqual(result.session.xp_awarded, 6)
+
+    def test_stopping_a_paused_session_never_counts_the_break_as_completion(self) -> None:
+        self.storage.create_session(1, None, 100)
+        self.storage.pause_active(120)
+
+        result = self.storage.stop_active(1_000)
+
+        self.assertEqual(result.session.status, "stopped")
+        self.assertEqual(result.session.actual_seconds, 20)
+        self.assertEqual(result.session.xp_awarded, 0)
+
+    def test_resumed_session_completes_at_extended_deadline(self) -> None:
+        created = self.storage.create_session(1, None, 100).created
+        self.storage.pause_active(120)
+        resumed = self.storage.resume_paused(1_000).resumed
+
+        self.assertEqual(resumed.planned_end_at, created.planned_end_at + 880)
+        self.assertIsNone(self.storage.complete_session(created.id, 1_039.9))
+        completed = self.storage.complete_session(created.id, 1_040)
+        self.assertEqual(completed.session.status, "completed")
+        self.assertEqual(completed.session.xp_awarded, 2)
+
+    def test_initialize_upgrades_database_created_before_pause_support(self) -> None:
+        old_path = Path(self.temp_dir.name) / "old.db"
+        with sqlite3.connect(old_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY, title TEXT NULL,
+                    planned_minutes INTEGER NOT NULL, started_at REAL NOT NULL,
+                    planned_end_at REAL NOT NULL, ended_at REAL NULL,
+                    actual_seconds INTEGER NULL, status TEXT NOT NULL,
+                    base_xp INTEGER NOT NULL DEFAULT 0,
+                    bonus_xp INTEGER NOT NULL DEFAULT 0,
+                    xp_awarded INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO sessions VALUES "
+                "('old', 'Existing', 10, 100, 700, NULL, NULL, "
+                "'active', 0, 0, 0, 100)"
+            )
+
+        upgraded = FocusStorage(old_path)
+        upgraded.initialize()
+
+        session = upgraded.get_active()
+        self.assertEqual(session.id, "old")
+        self.assertIsNone(session.paused_at)
+        self.assertEqual(session.paused_seconds, 0)
+        self.assertEqual(upgraded.pause_active(200).paused.status, "paused")
+
     def test_database_enforces_only_one_active_row(self) -> None:
         self.storage.create_session(10, None, 100)
         with sqlite3.connect(self.path) as connection:
             with self.assertRaises(sqlite3.IntegrityError):
                 connection.execute(
                     """
-                    INSERT INTO sessions VALUES (
+                    INSERT INTO sessions (
+                      id, title, planned_minutes, started_at, planned_end_at,
+                      ended_at, actual_seconds, status, base_xp, bonus_xp,
+                      xp_awarded, created_at
+                    ) VALUES (
                       'other', NULL, 10, 100, 700, NULL, NULL,
                       'active', 0, 0, 0, 100
                     )

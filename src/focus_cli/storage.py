@@ -11,7 +11,13 @@ from contextlib import closing
 from pathlib import Path
 from typing import Optional
 
-from .model import CreateSessionResult, FinalizedSession, Session
+from .model import (
+    CreateSessionResult,
+    FinalizedSession,
+    PauseSessionResult,
+    ResumeSessionResult,
+    Session,
+)
 
 
 SCHEMA = """
@@ -27,7 +33,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     base_xp INTEGER NOT NULL DEFAULT 0 CHECK (base_xp >= 0),
     bonus_xp INTEGER NOT NULL DEFAULT 0 CHECK (bonus_xp >= 0),
     xp_awarded INTEGER NOT NULL DEFAULT 0 CHECK (xp_awarded >= 0),
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    paused_at REAL NULL,
+    paused_seconds REAL NOT NULL DEFAULT 0 CHECK (paused_seconds >= 0)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS sessions_one_active
@@ -78,6 +86,28 @@ class FocusStorage:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with closing(self._connect()) as connection:
             connection.executescript(SCHEMA)
+            # Databases created before pause support need two additive columns.
+            # Keeping the stored status as "active" while paused preserves the
+            # existing one-current-session constraint without rebuilding data.
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(sessions)")
+                }
+                if "paused_at" not in columns:
+                    connection.execute(
+                        "ALTER TABLE sessions ADD COLUMN paused_at REAL NULL"
+                    )
+                if "paused_seconds" not in columns:
+                    connection.execute(
+                        "ALTER TABLE sessions ADD COLUMN paused_seconds "
+                        "REAL NOT NULL DEFAULT 0"
+                    )
+                connection.execute("COMMIT")
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
         try:
             self.path.chmod(0o600)
         except OSError:
@@ -98,6 +128,7 @@ class FocusStorage:
 
     @staticmethod
     def _session(row: sqlite3.Row) -> Session:
+        paused_at = row["paused_at"]
         return Session(
             id=row["id"],
             title=row["title"],
@@ -106,11 +137,17 @@ class FocusStorage:
             planned_end_at=row["planned_end_at"],
             ended_at=row["ended_at"],
             actual_seconds=row["actual_seconds"],
-            status=row["status"],
+            status=(
+                "paused"
+                if row["status"] == "active" and paused_at is not None
+                else row["status"]
+            ),
             base_xp=row["base_xp"],
             bonus_xp=row["bonus_xp"],
             xp_awarded=row["xp_awarded"],
             created_at=row["created_at"],
+            paused_at=paused_at,
+            paused_seconds=row["paused_seconds"],
         )
 
     @staticmethod
@@ -164,7 +201,15 @@ class FocusStorage:
             actual_seconds = int(row["planned_minutes"]) * 60
             ended_at = row["planned_end_at"]
         else:
-            elapsed = max(0.0, min(now, row["planned_end_at"]) - row["started_at"])
+            effective_now = (
+                row["paused_at"] if row["paused_at"] is not None else now
+            )
+            elapsed = max(
+                0.0,
+                min(effective_now, row["planned_end_at"])
+                - row["started_at"]
+                - row["paused_seconds"],
+            )
             actual_seconds = int(math.floor(elapsed))
             ended_at = now
 
@@ -176,7 +221,7 @@ class FocusStorage:
             """
             UPDATE sessions
                SET ended_at = ?, actual_seconds = ?, status = ?,
-                   base_xp = ?, bonus_xp = ?, xp_awarded = ?
+                   base_xp = ?, bonus_xp = ?, xp_awarded = ?, paused_at = NULL
              WHERE id = ? AND status = 'active'
             """,
             (
@@ -204,7 +249,11 @@ class FocusStorage:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 row = self._active_row(connection)
-                if row is None or now < row["planned_end_at"]:
+                if (
+                    row is None
+                    or row["paused_at"] is not None
+                    or now < row["planned_end_at"]
+                ):
                     connection.execute("COMMIT")
                     return None
                 finalized = self._finalize_row(connection, row, "completed", now)
@@ -224,7 +273,11 @@ class FocusStorage:
             try:
                 recovered: Optional[FinalizedSession] = None
                 row = self._active_row(connection)
-                if row is not None and now >= row["planned_end_at"]:
+                if (
+                    row is not None
+                    and row["paused_at"] is None
+                    and now >= row["planned_end_at"]
+                ):
                     recovered = self._finalize_row(connection, row, "completed", now)
                     row = None
 
@@ -243,8 +296,10 @@ class FocusStorage:
                     INSERT INTO sessions (
                         id, title, planned_minutes, started_at, planned_end_at,
                         ended_at, actual_seconds, status, base_xp, bonus_xp,
-                        xp_awarded, created_at
-                    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'active', 0, 0, 0, ?)
+                        xp_awarded, created_at, paused_at, paused_seconds
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, NULL, NULL, 'active', 0, 0, 0, ?, NULL, 0
+                    )
                     """,
                     (
                         session_id,
@@ -278,10 +333,79 @@ class FocusStorage:
                 if row is None:
                     connection.execute("COMMIT")
                     return None
-                status = "completed" if now >= row["planned_end_at"] else "stopped"
+                status = (
+                    "completed"
+                    if row["paused_at"] is None and now >= row["planned_end_at"]
+                    else "stopped"
+                )
                 finalized = self._finalize_row(connection, row, status, now)
                 connection.execute("COMMIT")
                 return finalized
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+
+    def pause_active(self, now: float) -> PauseSessionResult:
+        """Atomically pause the running session without counting paused time."""
+
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._active_row(connection)
+                if row is None:
+                    connection.execute("COMMIT")
+                    return PauseSessionResult(None, None, None)
+                if row["paused_at"] is not None:
+                    connection.execute("COMMIT")
+                    return PauseSessionResult(None, self._session(row), None)
+                if now >= row["planned_end_at"]:
+                    completed = self._finalize_row(connection, row, "completed", now)
+                    connection.execute("COMMIT")
+                    return PauseSessionResult(None, None, completed)
+
+                connection.execute(
+                    "UPDATE sessions SET paused_at = ? "
+                    "WHERE id = ? AND status = 'active'",
+                    (now, row["id"]),
+                )
+                paused_row = connection.execute(
+                    "SELECT * FROM sessions WHERE id = ?", (row["id"],)
+                ).fetchone()
+                connection.execute("COMMIT")
+                return PauseSessionResult(self._session(paused_row), None, None)
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+
+    def resume_paused(self, now: float) -> ResumeSessionResult:
+        """Atomically resume the paused session and extend its deadline."""
+
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._active_row(connection)
+                if row is None:
+                    connection.execute("COMMIT")
+                    return ResumeSessionResult(None, None)
+                if row["paused_at"] is None:
+                    connection.execute("COMMIT")
+                    return ResumeSessionResult(None, self._session(row))
+
+                paused_for = max(0.0, now - row["paused_at"])
+                connection.execute(
+                    """
+                    UPDATE sessions
+                       SET planned_end_at = planned_end_at + ?,
+                           paused_seconds = paused_seconds + ?, paused_at = NULL
+                     WHERE id = ? AND status = 'active'
+                    """,
+                    (paused_for, paused_for, row["id"]),
+                )
+                resumed_row = connection.execute(
+                    "SELECT * FROM sessions WHERE id = ?", (row["id"],)
+                ).fetchone()
+                connection.execute("COMMIT")
+                return ResumeSessionResult(self._session(resumed_row), None)
             except BaseException:
                 connection.execute("ROLLBACK")
                 raise
@@ -300,6 +424,7 @@ class FocusStorage:
                 if (
                     row is None
                     or row["status"] != "active"
+                    or row["paused_at"] is not None
                     or now < row["planned_end_at"]
                 ):
                     connection.execute("COMMIT")

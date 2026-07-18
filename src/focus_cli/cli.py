@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import re
 import sqlite3
 import sys
@@ -11,11 +10,13 @@ import time
 from pathlib import Path
 from typing import Optional, Sequence, TextIO
 
+from .model import FinalizedSession, Session
 from .presentation import (
     TimerDisplay,
     display_title,
     final_summary,
     format_remaining_words,
+    pause_summary,
     profile_view,
 )
 from .storage import FocusStorage, default_database_path
@@ -38,11 +39,15 @@ A minimal focus timer that rewards completed sessions with XP.
 
 Usage:
   focus start <minutes> [options]
+  focus pause
+  focus resume
   focus stop
   focus profile
 
 Commands:
   start    Start a focus session
+  pause    Pause the active focus session
+  resume   Resume the paused focus session
   stop     Stop the active focus session
   profile  Show your XP and all focus sessions
 
@@ -53,6 +58,8 @@ Start options:
 Examples:
   focus start 25
   focus start 60 -t "Working on Math Möbius"
+  focus pause
+  focus resume
   focus stop
   focus profile
 """
@@ -124,8 +131,55 @@ def start_parser(
     return parser
 
 
-def _print_recovered(recovered, stdout: TextIO) -> None:
+def _print_recovered(recovered: FinalizedSession, stdout: TextIO) -> None:
     stdout.write(final_summary(recovered, recovered=True) + "\n\n")
+
+
+def _print_current_session(session: Session, stdout: TextIO, now: float) -> None:
+    if session.status == "paused":
+        stdout.write(pause_summary(session, now, already_paused=True) + "\n")
+        return
+    stdout.write(
+        "A focus session is already running.\n\n"
+        f"Remaining: {format_remaining_words(session.remaining_seconds_at(now))}\n"
+        f"Title: {display_title(session.title)}\n\n"
+        "Use `focus pause` to pause it or `focus stop` to end it.\n"
+    )
+
+
+def _display_session(
+    storage: FocusStorage,
+    session: Session,
+    *,
+    stdin: TextIO,
+    stdout: TextIO,
+) -> int:
+    result = TimerDisplay(
+        storage,
+        session,
+        stdin=stdin,
+        stdout=stdout,
+    ).run()
+    if result is None:
+        stdout.write(
+            "Timer display closed. Your focus session is still running.\n\n"
+            "Run `focus pause` to pause it or `focus stop` to stop it.\n"
+        )
+        return 0
+
+    result_session = (
+        result.session if isinstance(result, FinalizedSession) else result
+    )
+    if result_session.status == "paused":
+        stdout.write(pause_summary(result_session, time.time()) + "\n")
+        return 0
+
+    if result.session.status == "completed" and getattr(
+        stdout, "isatty", lambda: False
+    )():
+        stdout.write("\a")
+    stdout.write(final_summary(result) + "\n")
+    return 0
 
 
 def _run_start(
@@ -141,35 +195,46 @@ def _run_start(
         _print_recovered(result.recovered, stdout)
 
     if result.existing is not None:
-        remaining = max(0, math.ceil(result.existing.planned_end_at - time.time()))
-        stdout.write(
-            "A focus session is already running.\n\n"
-            f"Remaining: {format_remaining_words(remaining)}\n"
-            f"Title: {display_title(result.existing.title)}\n\n"
-            "Use `focus stop` to end the current session.\n"
-        )
+        _print_current_session(result.existing, stdout, time.time())
         return 0
 
     if result.created is None:
         raise RuntimeError("Focus could not create the session.")
 
-    finalized = TimerDisplay(
-        storage,
-        result.created,
-        stdin=stdin,
-        stdout=stdout,
-    ).run()
-    if finalized is None:
-        stdout.write(
-            "Timer display closed. Your focus session is still running.\n\n"
-            "Run `focus stop` to stop it.\n"
-        )
-        return 0
+    return _display_session(storage, result.created, stdin=stdin, stdout=stdout)
 
-    if finalized.session.status == "completed" and getattr(stdout, "isatty", lambda: False)():
-        stdout.write("\a")
-    stdout.write(final_summary(finalized) + "\n")
+
+def _run_pause(storage: FocusStorage, stdout: TextIO) -> int:
+    now = time.time()
+    result = storage.pause_active(now)
+    if result.completed is not None:
+        stdout.write(final_summary(result.completed, recovered=True) + "\n")
+    elif result.paused is not None:
+        stdout.write(pause_summary(result.paused, now) + "\n")
+    elif result.existing is not None:
+        stdout.write(
+            pause_summary(result.existing, now, already_paused=True) + "\n"
+        )
+    else:
+        stdout.write("No focus session is currently active.\n")
     return 0
+
+
+def _run_resume(
+    storage: FocusStorage,
+    *,
+    stdin: TextIO,
+    stdout: TextIO,
+) -> int:
+    now = time.time()
+    result = storage.resume_paused(now)
+    if result.existing is not None:
+        _print_current_session(result.existing, stdout, now)
+        return 0
+    if result.resumed is None:
+        stdout.write("No paused focus session to resume.\n")
+        return 0
+    return _display_session(storage, result.resumed, stdin=stdin, stdout=stdout)
 
 
 def _run_stop(storage: FocusStorage, stdout: TextIO) -> int:
@@ -222,13 +287,14 @@ def main(
         return 0
 
     command = arguments[0]
-    if command not in {"start", "stop", "profile"}:
+    if command not in {"start", "pause", "resume", "stop", "profile"}:
         stderr.write(
             f"Error: Unknown command: {command}\n\n"
             "Run `focus --help` for usage.\n"
         )
         return 2
-    if command in {"stop", "profile"} and len(arguments) != 1:
+    no_argument_commands = {"pause", "resume", "stop", "profile"}
+    if command in no_argument_commands and len(arguments) != 1:
         usage = f"focus {command}"
         stderr.write(
             f"Error: The {command} command does not accept arguments.\n\n"
@@ -253,6 +319,10 @@ def main(
         # introducing a race between separate processes.
         if command == "start":
             return _run_start(start_options, storage, stdin=stdin, stdout=stdout)
+        if command == "pause":
+            return _run_pause(storage, stdout)
+        if command == "resume":
+            return _run_resume(storage, stdin=stdin, stdout=stdout)
         if command == "stop":
             return _run_stop(storage, stdout)
         return _run_profile(storage, stdout)

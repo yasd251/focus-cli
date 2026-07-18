@@ -11,7 +11,7 @@ import threading
 import time
 import textwrap
 from datetime import datetime
-from typing import Callable, Optional, Sequence, TextIO
+from typing import Callable, Optional, Sequence, TextIO, Union
 
 from .model import FinalizedSession, Session
 from .storage import FocusStorage
@@ -107,6 +107,29 @@ def final_summary(finalized: FinalizedSession, recovered: bool = False) -> str:
     return "\n".join(lines)
 
 
+def pause_summary(
+    session: Session, now: float, *, already_paused: bool = False
+) -> str:
+    heading = (
+        "Focus session is already paused."
+        if already_paused
+        else "Focus session paused."
+    )
+    return "\n".join(
+        [
+            heading,
+            "",
+            f"Focused for: {format_elapsed(session.focused_seconds_at(now))}",
+            "Remaining:   "
+            + format_remaining_words(session.remaining_seconds_at(now)),
+            "",
+            display_title(session.title),
+            "",
+            "Run `focus resume` to continue or `focus stop` to end the session.",
+        ]
+    )
+
+
 def profile_view(
     sessions: Sequence[Session],
     total_xp: int,
@@ -141,10 +164,8 @@ def profile_view(
 
     rows: list[tuple[str, str, str, str]] = []
     for session in sessions:
-        if session.status == "active":
-            elapsed = int(
-                max(0.0, min(now, session.planned_end_at) - session.started_at)
-            )
+        if session.status in {"active", "paused"}:
+            elapsed = session.focused_seconds_at(now)
         else:
             elapsed = session.actual_seconds or 0
         duration = f"{format_elapsed(elapsed)} / {session.planned_minutes}m"
@@ -161,7 +182,9 @@ def profile_view(
         for status, duration, session_title, date in rows:
             status_text = f"{status:<9}"
             if interactive:
-                status_color = TITLE_GOLD if status == "ACTIVE" else MUTED
+                status_color = (
+                    TITLE_GOLD if status in {"ACTIVE", "PAUSED"} else MUTED
+                )
                 status_text = status_color + status_text + RESET
             timestamp_line = f"  Started: {date}"
             if interactive:
@@ -190,7 +213,9 @@ def profile_view(
         )
         status_text = f"{status:<{status_width}}"
         if interactive:
-            status_color = TITLE_GOLD if status == "ACTIVE" else MUTED
+            status_color = (
+                TITLE_GOLD if status in {"ACTIVE", "PAUSED"} else MUTED
+            )
             status_text = status_color + status_text + RESET
         lines.append(
             f"{status_text}  {duration:<{duration_width}}  "
@@ -415,7 +440,7 @@ class TimerDisplay:
             + " │"
         )
         bottom_border = box_prefix + "╰" + "─" * (box_width - 2) + "╯"
-        hint = "Type focus stop and press Enter"
+        hint = "Type focus pause or focus stop and press Enter"
         hint_line = hint.center(terminal_width)
         if self.interactive:
             input_line = (
@@ -473,7 +498,7 @@ class TimerDisplay:
     def _result_for_existing(self, session: Session) -> FinalizedSession:
         return FinalizedSession(session=session, total_xp=self.storage.total_xp())
 
-    def run(self) -> Optional[FinalizedSession]:
+    def run(self) -> Optional[Union[FinalizedSession, Session]]:
         """Run until finalized; return ``None`` only when the display is closed."""
 
         self._enable_character_input()
@@ -510,8 +535,19 @@ class TimerDisplay:
                 if current.status != "active":
                     self._clear_live_display()
                     return self._result_for_existing(current)
+                # A resume in another process extends the persisted deadline.
+                # Refresh the display's copy before rendering or waiting.
+                self.session = current
 
                 command = self._read_command()
+                if command == "focus pause":
+                    paused = self.storage.pause_active(self.now())
+                    if paused.completed is not None:
+                        self._clear_live_display()
+                        return paused.completed
+                    if paused.paused is not None:
+                        self._clear_live_display()
+                        return paused.paused
                 if command == "focus stop":
                     finalized = self.storage.stop_active(self.now())
                     if finalized is not None:

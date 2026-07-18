@@ -27,16 +27,20 @@ python -m pip install -e .
 focus start 25
 focus start 60 -t "Working on Math Möbius"
 focus start 90 --title "Implementing authentication"
+focus pause
+focus resume
 focus stop
 focus profile
 ```
 
-Only one session can be active. `focus stop` can be issued in the timer's
-input line or from another terminal. Pressing Ctrl+C closes only the live
-display; the persisted session keeps running until stopped or completed.
+Only one session can be current. Use `focus pause` to freeze its countdown and
+`focus resume` to continue without counting the break as focus time. Pause and
+stop can be issued in the timer's input line or from another terminal. Pressing
+Ctrl+C closes only the live display; the persisted session keeps running until
+paused, stopped, or completed.
 
 `focus profile` shows a terminal avatar, your XP, and every recorded session,
-including sessions that are active or were stopped early.
+including sessions that are active, paused, or were stopped early.
 
 Run `focus --help` for the complete command summary.
 
