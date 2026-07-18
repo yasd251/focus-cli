@@ -523,7 +523,8 @@ class TimerDisplay:
 
                 current = self.storage.get_session(self.session.id)
                 if current is None:
-                    raise RuntimeError("The active session record disappeared.")
+                    self._clear_live_display()
+                    return None
                 if current.status != "active":
                     self._clear_live_display()
                     return self._result_for_existing(current)

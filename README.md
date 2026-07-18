@@ -31,6 +31,7 @@ focus pause
 focus resume
 focus stop
 focus profile
+focus delete latest
 focus config name "Lemuel"
 ```
 
@@ -43,6 +44,10 @@ paused, stopped, or completed.
 Set your profile name with `focus config name "Lemuel"`. `focus profile` shows
 the configured name, your XP, and every recorded session, including sessions
 that are active, paused, or were stopped early.
+
+Permanently remove the newest session with `focus delete latest`. This also
+removes any XP awarded by that session. Other sessions and profile settings are
+left unchanged.
 
 Run `focus --help` for the complete command summary.
 

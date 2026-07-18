@@ -16,6 +16,7 @@ from .presentation import (
     display_title,
     final_summary,
     format_remaining_words,
+    format_session_datetime,
     pause_summary,
     profile_view,
 )
@@ -43,6 +44,7 @@ Usage:
   focus resume
   focus stop
   focus profile
+  focus delete latest
   focus config name <name>
 
 Commands:
@@ -51,6 +53,7 @@ Commands:
   resume   Resume the paused focus session
   stop     Stop the active focus session
   profile  Show your XP and all focus sessions
+  delete   Permanently delete the latest focus session
   config   Configure your focus profile
 
 Start options:
@@ -64,11 +67,13 @@ Examples:
   focus resume
   focus stop
   focus profile
+  focus delete latest
   focus config name "Lemuel"
 """
 
 START_USAGE = 'Usage:\n  focus start <minutes> [-t "description"]'
 CONFIG_USAGE = 'Usage:\n  focus config name <name>'
+DELETE_USAGE = 'Usage:\n  focus delete latest'
 
 
 class FocusArgumentParser(argparse.ArgumentParser):
@@ -176,6 +181,9 @@ def _display_session(
         stdout=stdout,
     ).run()
     if result is None:
+        if storage.get_session(session.id) is None:
+            stdout.write("Focus session deleted.\n")
+            return 0
         stdout.write(
             "Timer display closed. Your focus session is still running.\n\n"
             "Run `focus pause` to pause it or `focus stop` to stop it.\n"
@@ -291,6 +299,20 @@ def _run_config(name: str, storage: FocusStorage, stdout: TextIO) -> int:
     return 0
 
 
+def _run_delete(storage: FocusStorage, stdout: TextIO) -> int:
+    deleted = storage.delete_latest()
+    if deleted is None:
+        stdout.write("No focus sessions to delete.\n")
+        return 0
+    stdout.write(
+        "Deleted latest focus session permanently.\n\n"
+        f"Title:   {display_title(deleted.title)}\n"
+        f"Started: {format_session_datetime(deleted.started_at)}\n"
+        f"Status:  {deleted.status.upper()}\n"
+    )
+    return 0
+
+
 def main(
     argv: Optional[Sequence[str]] = None,
     *,
@@ -309,7 +331,15 @@ def main(
         return 0
 
     command = arguments[0]
-    commands = {"start", "pause", "resume", "stop", "profile", "config"}
+    commands = {
+        "start",
+        "pause",
+        "resume",
+        "stop",
+        "profile",
+        "delete",
+        "config",
+    }
     if command not in commands:
         stderr.write(
             f"Error: Unknown command: {command}\n\n"
@@ -345,6 +375,13 @@ def main(
         except argparse.ArgumentTypeError as error:
             stderr.write(f"Error: {error}\n\n{CONFIG_USAGE}\n")
             return 2
+    elif command == "delete":
+        if arguments != ["delete", "latest"]:
+            stderr.write(
+                "Error: The delete command only supports `latest`.\n\n"
+                f"{DELETE_USAGE}\n"
+            )
+            return 2
 
     storage = FocusStorage(database_path)
     try:
@@ -361,6 +398,8 @@ def main(
             return _run_resume(storage, stdin=stdin, stdout=stdout)
         if command == "stop":
             return _run_stop(storage, stdout)
+        if command == "delete":
+            return _run_delete(storage, stdout)
         if command == "config":
             return _run_config(configured_name, storage, stdout)
         return _run_profile(storage, stdout)

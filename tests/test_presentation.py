@@ -161,6 +161,24 @@ class PresentationTests(unittest.TestCase):
             self.assertEqual(result.session.status, "stopped")
             self.assertEqual(result.session.xp_awarded, 2)
 
+    def test_timer_exits_cleanly_when_session_is_deleted_elsewhere(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            storage = FocusStorage(Path(directory) / "focus.db")
+            storage.initialize()
+            session = storage.create_session(25, "Delete me", 100).created
+            storage.delete_latest()
+
+            display = TimerDisplay(
+                storage,
+                session,
+                stdin=io.StringIO(),
+                stdout=io.StringIO(),
+                now=lambda: 101,
+                tick_seconds=0.001,
+            )
+
+            self.assertIsNone(display.run())
+
     def test_live_pause_command_pauses_and_returns_the_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             storage = FocusStorage(Path(directory) / "focus.db")

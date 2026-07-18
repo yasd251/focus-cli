@@ -210,6 +210,33 @@ class FocusStorage:
             ).fetchall()
             return [self._session(row) for row in rows]
 
+    def delete_latest(self) -> Optional[Session]:
+        """Atomically delete and return the newest focus session."""
+
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    """
+                    SELECT * FROM sessions
+                    ORDER BY created_at DESC, rowid DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if row is None:
+                    connection.execute("COMMIT")
+                    return None
+
+                session = self._session(row)
+                connection.execute(
+                    "DELETE FROM sessions WHERE id = ?", (row["id"],)
+                )
+                connection.execute("COMMIT")
+                return session
+            except BaseException:
+                connection.execute("ROLLBACK")
+                raise
+
     def _finalize_row(
         self,
         connection: sqlite3.Connection,

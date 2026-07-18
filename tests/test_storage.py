@@ -48,6 +48,28 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(result.existing.id, first.id)
         self.assertEqual(len(self.storage.all_sessions()), 1)
 
+    def test_delete_latest_removes_only_newest_session_and_its_xp(self) -> None:
+        older = self.storage.create_session(10, "Older", 100).created
+        self.storage.complete_session(older.id, 700)
+        newer = self.storage.create_session(5, "Newer", 800).created
+        self.storage.complete_session(newer.id, 1_100)
+
+        deleted = self.storage.delete_latest()
+
+        self.assertEqual(deleted.id, newer.id)
+        self.assertIsNone(self.storage.get_session(newer.id))
+        self.assertEqual(self.storage.get_session(older.id).title, "Older")
+        self.assertEqual(self.storage.total_xp(), 12)
+
+    def test_delete_latest_can_remove_current_session(self) -> None:
+        current = self.storage.create_session(25, "Current", 100).created
+
+        deleted = self.storage.delete_latest()
+
+        self.assertEqual(deleted.id, current.id)
+        self.assertIsNone(self.storage.get_active())
+        self.assertIsNone(self.storage.delete_latest())
+
     def test_stopped_session_uses_floor_minutes_and_no_bonus(self) -> None:
         self.storage.create_session(60, "Work", 100)
         result = self.storage.stop_active(100 + 37 * 60 + 24.9)

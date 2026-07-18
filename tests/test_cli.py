@@ -38,6 +38,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("focus resume", stdout)
         self.assertIn("focus stop", stdout)
         self.assertIn("focus profile", stdout)
+        self.assertIn("focus delete latest", stdout)
         self.assertIn("focus config name <name>", stdout)
         self.assertIn("--title", stdout)
         self.assertEqual(stderr, "")
@@ -79,6 +80,20 @@ class CliTests(unittest.TestCase):
                 code, _, stderr = self.run_cli([command, "now"])
                 self.assertEqual(code, 2)
                 self.assertIn("does not accept arguments", stderr)
+
+    def test_delete_requires_latest(self) -> None:
+        invalid = [
+            ["delete"],
+            ["delete", "oldest"],
+            ["delete", "latest", "now"],
+        ]
+        for arguments in invalid:
+            with self.subTest(arguments=arguments):
+                code, stdout, stderr = self.run_cli(arguments)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn("only supports `latest`", stderr)
+                self.assertIn("focus delete latest", stderr)
 
     def test_duration_validation(self) -> None:
         invalid = ["zero", "-20", "0", "1.5", "60m", "1441"]
@@ -127,6 +142,33 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stdout, "No paused focus session to resume.\n")
         self.assertEqual(stderr, "")
+
+    def test_delete_latest_without_sessions_is_informational(self) -> None:
+        code, stdout, stderr = self.run_cli(["delete", "latest"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "No focus sessions to delete.\n")
+        self.assertEqual(stderr, "")
+
+    def test_delete_latest_reports_and_removes_newest_session(self) -> None:
+        storage = FocusStorage(self.path)
+        storage.initialize()
+        older = storage.create_session(10, "Older work", 100).created
+        storage.complete_session(older.id, 700)
+        storage.create_session(5, "Accidental work", 800)
+        storage.stop_active(920)
+
+        code, stdout, stderr = self.run_cli(["delete", "latest"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Deleted latest focus session permanently.", stdout)
+        self.assertIn("Title:   Accidental work", stdout)
+        self.assertIn("Status:  STOPPED", stdout)
+        self.assertEqual(stderr, "")
+        self.assertEqual(
+            [session.id for session in storage.all_sessions()], [older.id]
+        )
+        self.assertEqual(storage.total_xp(), 12)
 
     def test_pause_then_resume_preserves_the_countdown(self) -> None:
         storage = FocusStorage(self.path)
