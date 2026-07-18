@@ -52,5 +52,3 @@ set `FOCUS_DATA_DIR` to override its containing directory.
 ```bash
 python -m unittest discover -s tests -v
 ```
-
-The product behavior and MVP boundaries are defined in [SPEC.md](SPEC.md).
