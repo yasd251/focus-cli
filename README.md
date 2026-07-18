@@ -5,8 +5,7 @@ countdown on screen, and earn one XP per focused minute plus a 20% bonus when
 you complete the full timer.
 
 ## Demo
-
-[Watch the Focus CLI demo](./assets/focus-cli-demo.mp4)
+https://github.com/user-attachments/assets/064aa8d8-8f3b-4690-89ea-8d1bd48b73eb
 
 ## Install
 
