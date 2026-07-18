@@ -31,6 +31,7 @@ focus pause
 focus resume
 focus stop
 focus profile
+focus config name "Lemuel"
 ```
 
 Only one session can be current. Use `focus pause` to freeze its countdown and
@@ -39,8 +40,9 @@ stop can be issued in the timer's input line or from another terminal. Pressing
 Ctrl+C closes only the live display; the persisted session keeps running until
 paused, stopped, or completed.
 
-`focus profile` shows a terminal avatar, your XP, and every recorded session,
-including sessions that are active, paused, or were stopped early.
+Set your profile name with `focus config name "Lemuel"`. `focus profile` shows
+the configured name, your XP, and every recorded session, including sessions
+that are active, paused, or were stopped early.
 
 Run `focus --help` for the complete command summary.
 

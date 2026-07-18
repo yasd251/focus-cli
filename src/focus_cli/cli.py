@@ -43,6 +43,7 @@ Usage:
   focus resume
   focus stop
   focus profile
+  focus config name <name>
 
 Commands:
   start    Start a focus session
@@ -50,6 +51,7 @@ Commands:
   resume   Resume the paused focus session
   stop     Stop the active focus session
   profile  Show your XP and all focus sessions
+  config   Configure your focus profile
 
 Start options:
   -t, --title <text>    Describe what you are focusing on
@@ -62,9 +64,11 @@ Examples:
   focus resume
   focus stop
   focus profile
+  focus config name "Lemuel"
 """
 
 START_USAGE = 'Usage:\n  focus start <minutes> [-t "description"]'
+CONFIG_USAGE = 'Usage:\n  focus config name <name>'
 
 
 class FocusArgumentParser(argparse.ArgumentParser):
@@ -113,6 +117,17 @@ def title(value: str) -> Optional[str]:
     if len(trimmed) > 200:
         raise argparse.ArgumentTypeError("Title must be 200 characters or fewer.")
     return trimmed or None
+
+
+def profile_name(value: str) -> str:
+    trimmed = value.strip()
+    if not trimmed:
+        raise argparse.ArgumentTypeError("Name cannot be empty.")
+    if len(trimmed) > 80:
+        raise argparse.ArgumentTypeError("Name must be 80 characters or fewer.")
+    if any(character in trimmed for character in "\r\n"):
+        raise argparse.ArgumentTypeError("Name must be a single line.")
+    return trimmed
 
 
 def start_parser(
@@ -263,9 +278,16 @@ def _run_profile(storage: FocusStorage, stdout: TextIO) -> int:
             sessions,
             storage.total_xp(),
             now,
+            name=storage.profile_name(),
             interactive=interactive,
         )
     )
+    return 0
+
+
+def _run_config(name: str, storage: FocusStorage, stdout: TextIO) -> int:
+    storage.set_profile_name(name)
+    stdout.write(f"Profile name set to {name}.\n")
     return 0
 
 
@@ -287,7 +309,8 @@ def main(
         return 0
 
     command = arguments[0]
-    if command not in {"start", "pause", "resume", "stop", "profile"}:
+    commands = {"start", "pause", "resume", "stop", "profile", "config"}
+    if command not in commands:
         stderr.write(
             f"Error: Unknown command: {command}\n\n"
             "Run `focus --help` for usage.\n"
@@ -305,10 +328,23 @@ def main(
     # Validate before touching local storage. Argument mistakes should always
     # produce exit code 2, even when the database location is unavailable.
     start_options = None
+    configured_name = None
     if command == "start":
         start_options = start_parser(stdout=stdout, stderr=stderr).parse_args(
             arguments[1:]
         )
+    elif command == "config":
+        if len(arguments) != 3 or arguments[1] != "name":
+            stderr.write(
+                "Error: The config command requires a name.\n\n"
+                f"{CONFIG_USAGE}\n"
+            )
+            return 2
+        try:
+            configured_name = profile_name(arguments[2])
+        except argparse.ArgumentTypeError as error:
+            stderr.write(f"Error: {error}\n\n{CONFIG_USAGE}\n")
+            return 2
 
     storage = FocusStorage(database_path)
     try:
@@ -325,6 +361,8 @@ def main(
             return _run_resume(storage, stdin=stdin, stdout=stdout)
         if command == "stop":
             return _run_stop(storage, stdout)
+        if command == "config":
+            return _run_config(configured_name, storage, stdout)
         return _run_profile(storage, stdout)
     except (OSError, sqlite3.Error):
         path = database_path or default_database_path()

@@ -38,6 +38,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("focus resume", stdout)
         self.assertIn("focus stop", stdout)
         self.assertIn("focus profile", stdout)
+        self.assertIn("focus config name <name>", stdout)
         self.assertIn("--title", stdout)
         self.assertEqual(stderr, "")
 
@@ -56,6 +57,21 @@ class CliTests(unittest.TestCase):
         code, _, stderr = self.run_cli(["profile", "extra"])
         self.assertEqual(code, 2)
         self.assertIn("profile command does not accept arguments", stderr)
+
+    def test_config_requires_a_valid_name(self) -> None:
+        invalid_arguments = [
+            ["config"],
+            ["config", "color", "red"],
+            ["config", "name", "   "],
+            ["config", "name", "x" * 81],
+            ["config", "name", "First\nLast"],
+        ]
+        for arguments in invalid_arguments:
+            with self.subTest(arguments=arguments):
+                code, stdout, stderr = self.run_cli(arguments)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn("focus config name <name>", stderr)
 
     def test_pause_and_resume_arguments_exit_two(self) -> None:
         for command in ("pause", "resume"):
@@ -155,6 +171,21 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("Recovered completed session", stdout)
         self.assertEqual(stderr, "")
 
+    def test_configured_name_is_trimmed_and_shown_with_profile_xp(self) -> None:
+        code, stdout, stderr = self.run_cli(
+            ["config", "name", "  Lemuel  "]
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout, "Profile name set to Lemuel.\n")
+        self.assertEqual(stderr, "")
+
+        code, stdout, stderr = self.run_cli(["profile"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Hey, Lemuel\nTotal XP: 0 XP", stdout)
+        self.assertEqual(stderr, "")
+
     def test_start_persists_before_display_and_ctrl_c_style_close_keeps_active(self) -> None:
         with patch.object(cli.TimerDisplay, "run", return_value=None):
             code, stdout, stderr = self.run_cli(
@@ -216,7 +247,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Recovered work", stdout)
         self.assertEqual(stderr, "")
 
-    def test_profile_shows_avatar_xp_and_every_session_status(self) -> None:
+    def test_profile_shows_xp_and_every_session_status(self) -> None:
         storage = FocusStorage(self.path)
         storage.initialize()
 
@@ -230,7 +261,7 @@ class CliTests(unittest.TestCase):
             code, stdout, stderr = self.run_cli(["profile"])
 
         self.assertEqual(code, 0)
-        self.assertIn("│  │ F │  │", stdout)
+        self.assertNotIn("│  │ F │  │", stdout)
         self.assertIn("14 XP", stdout)
         self.assertIn("ACTIVE", stdout)
         self.assertIn("COMPLETED", stdout)

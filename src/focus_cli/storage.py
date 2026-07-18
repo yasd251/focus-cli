@@ -44,6 +44,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS sessions_one_active
 
 CREATE INDEX IF NOT EXISTS sessions_created_at
     ON sessions(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -166,6 +171,23 @@ class FocusStorage:
     def total_xp(self) -> int:
         with closing(self._connect()) as connection:
             return self._total_xp(connection)
+
+    def profile_name(self) -> Optional[str]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT value FROM settings WHERE key = 'profile_name'"
+            ).fetchone()
+            return str(row["value"]) if row is not None else None
+
+    def set_profile_name(self, name: str) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO settings (key, value) VALUES ('profile_name', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (name,),
+            )
 
     def get_active(self) -> Optional[Session]:
         with closing(self._connect()) as connection:

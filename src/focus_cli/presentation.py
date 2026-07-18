@@ -24,13 +24,6 @@ MUTED = "\x1b[38;2;115;115;115m"
 BOLD = "\x1b[1m"
 RESET = "\x1b[0m"
 
-PROFILE_AVATAR = (
-    "╭─────────╮",
-    "│  ╭───╮  │",
-    "│  │ F │  │",
-    "│  ╰───╯  │",
-    "╰─────────╯",
-)
 
 def display_title(title: Optional[str]) -> str:
     return title if title else "No description"
@@ -135,6 +128,7 @@ def profile_view(
     total_xp: int,
     now: float,
     *,
+    name: Optional[str] = None,
     interactive: bool = False,
     width: Optional[int] = None,
 ) -> str:
@@ -142,15 +136,13 @@ def profile_view(
 
     terminal_width = width or shutil.get_terminal_size(fallback=(80, 24)).columns
     terminal_width = max(36, terminal_width)
-    lines: list[str] = [""]
-    for avatar_line in PROFILE_AVATAR:
-        centered = avatar_line.center(terminal_width)
-        lines.append(ACCENT_RED + centered + RESET if interactive else centered)
-
-    xp_line = f"{total_xp} XP".center(terminal_width)
+    lines: list[str] = []
+    if name:
+        greeting = f"Hey, {name}"
+        lines.append(BOLD + greeting + RESET if interactive else greeting)
+    xp_line = f"Total XP: {total_xp} XP"
     lines.extend(
         [
-            "",
             BOLD + TITLE_GOLD + xp_line + RESET if interactive else xp_line,
             "",
             "Sessions",

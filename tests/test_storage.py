@@ -31,6 +31,15 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(session.xp_awarded, 0)
         self.assertEqual(self.storage.get_active().id, session.id)
 
+    def test_profile_name_can_be_saved_and_updated(self) -> None:
+        self.assertIsNone(self.storage.profile_name())
+
+        self.storage.set_profile_name("Lemuel")
+        self.assertEqual(self.storage.profile_name(), "Lemuel")
+
+        self.storage.set_profile_name("Mia")
+        self.assertEqual(self.storage.profile_name(), "Mia")
+
     def test_second_session_is_not_created(self) -> None:
         first = self.storage.create_session(60, None, 100).created
         result = self.storage.create_session(25, "second", 101)

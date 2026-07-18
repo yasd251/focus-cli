@@ -49,12 +49,16 @@ class PresentationTests(unittest.TestCase):
     def test_missing_title_has_display_fallback(self) -> None:
         self.assertEqual(display_title(None), "No description")
 
-    def test_empty_profile_has_avatar_xp_and_no_extra_statistics(self) -> None:
+    def test_empty_profile_has_xp_and_no_extra_statistics(self) -> None:
         rendered = profile_view([], 0, 100, width=80)
-        self.assertIn("│  │ F │  │", rendered)
+        self.assertNotIn("│  │ F │  │", rendered)
         self.assertIn("0 XP", rendered)
         self.assertIn("No focus sessions yet.", rendered)
         self.assertNotIn("Total focus", rendered)
+
+    def test_profile_renders_configured_name_above_xp(self) -> None:
+        rendered = profile_view([], 42, 100, name="Lemuel", width=80)
+        self.assertTrue(rendered.startswith("Hey, Lemuel\nTotal XP: 42 XP\n"))
 
     def test_live_input_preserves_characters_and_handles_backspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
