@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from focus_cli.model import Session
 from focus_cli.presentation import (
@@ -119,6 +121,32 @@ class PresentationTests(unittest.TestCase):
             self.assertLess(rendered.index("Write the report"), rendered.index("1970"))
             self.assertNotIn("FOCUS SESSION", rendered)
             self.assertNotIn("✓", rendered)
+
+    def test_live_resize_clears_previous_frame_before_painting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            storage = FocusStorage(Path(directory) / "focus.db")
+            storage.initialize()
+            session = storage.create_session(25, "Resize safely", 100).created
+            output = self.TtyBuffer()
+            display = TimerDisplay(
+                storage,
+                session,
+                stdin=self.TtyBuffer(),
+                stdout=output,
+            )
+
+            sizes = [os.terminal_size((80, 24)), os.terminal_size((52, 18))]
+            with patch(
+                "focus_cli.presentation.shutil.get_terminal_size",
+                side_effect=sizes,
+            ):
+                display._render(100)
+                first_frame_length = len(output.getvalue())
+                display._render(101)
+            second_frame = output.getvalue()[first_frame_length:]
+
+            self.assertTrue(second_frame.startswith("\x1b[?25l\x1b[2J\x1b[H"))
+            self.assertLess(second_frame.index("\x1b[2J"), second_frame.index("24:59"))
 
     def test_keyboard_interrupt_closes_display_but_keeps_session_active(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

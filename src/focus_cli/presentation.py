@@ -250,6 +250,7 @@ class TimerDisplay:
         self._input_buffer = ""
         self._character_input = False
         self._terminal_state = None
+        self._terminal_size: Optional[os.terminal_size] = None
 
     def _enable_character_input(self) -> None:
         """Let Focus own echoing so timer redraws cannot erase typed text."""
@@ -355,6 +356,8 @@ class TimerDisplay:
         percent = min(100, int(round(progress * 100)))
 
         terminal_size = shutil.get_terminal_size(fallback=(80, 24))
+        terminal_resized = terminal_size != self._terminal_size
+        self._terminal_size = terminal_size
         terminal_width = max(20, terminal_size.columns)
         terminal_height = max(12, terminal_size.lines)
         content_width = max(16, min(64, terminal_width - 4))
@@ -470,7 +473,17 @@ class TimerDisplay:
         if self.interactive:
             rows_below_input = len(lines) - input_row - 1
             cursor_column = box_indent + 4 + len(visible_input)
-            output = "\x1b[?25l\x1b[H" + "\n".join(lines) + "\x1b[J"
+            # Clear before painting. After a resize, terminals may reflow the
+            # previous frame onto different rows; clearing only below the new
+            # frame leaves parts of that reflowed timer visible.
+            clear_screen = "\x1b[2J" if terminal_resized else ""
+            output = (
+                "\x1b[?25l"
+                + clear_screen
+                + "\x1b[H"
+                + "\n".join(lines)
+                + "\x1b[J"
+            )
             if rows_below_input:
                 output += f"\x1b[{rows_below_input}A"
             output += "\r"
