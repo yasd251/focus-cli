@@ -4,6 +4,10 @@ Focus CLI is a small, local-first focus timer. Start a session, keep a clear
 countdown on screen, and earn one XP per focused minute plus a 20% bonus when
 you complete the full timer.
 
+## Demo
+
+[Watch the Focus CLI demo](./assets/focus-cli-demo.mp4)
+
 ## Install
 
 Focus CLI requires Python 3.9 or newer and has no third-party runtime
