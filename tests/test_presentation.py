@@ -109,8 +109,12 @@ class PresentationTests(unittest.TestCase):
             self.assertIn("\x1b[38;2;239;68;68m", rendered)
             self.assertIn("\x1b[38;2;251;191;36m", rendered)
             self.assertIn("\x1b[38;2;148;163;184m", rendered)
+            self.assertIn("\x1b[38;2;34;197;94m", rendered)
             self.assertIn("╭", rendered)
-            self.assertIn("12 XP", rendered)
+            self.assertIn("You currently have a total of 12 XP", rendered)
+            self.assertIn(
+                "Finishing this focus session will give you +30 XP", rendered
+            )
             self.assertIn("20:00", rendered)
             self.assertIn("focus stop", rendered)
             self.assertIn(format_date(session.started_at), rendered)
@@ -168,6 +172,36 @@ class PresentationTests(unittest.TestCase):
             )
             self.assertIsNone(display.run())
             self.assertEqual(storage.get_active().id, session.id)
+
+    def test_noninteractive_start_describes_total_and_completion_xp(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            storage = FocusStorage(Path(directory) / "focus.db")
+            storage.initialize()
+            previous = storage.create_session(10, "Previous", -1_000).created
+            storage.complete_session(previous.id, -400)
+            session = storage.create_session(25, "Current", 100).created
+            output = io.StringIO()
+
+            def interrupted_time():
+                raise KeyboardInterrupt
+
+            display = TimerDisplay(
+                storage,
+                session,
+                stdin=io.StringIO(),
+                stdout=output,
+                now=interrupted_time,
+            )
+
+            self.assertIsNone(display.run())
+            self.assertIn(
+                "You currently have a total of 12 XP\n", output.getvalue()
+            )
+            self.assertIn(
+                "Finishing this focus session will give you +30 XP\n",
+                output.getvalue(),
+            )
+            self.assertNotIn("\x1b[", output.getvalue())
 
     def test_timer_detects_session_stopped_elsewhere_without_waiting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

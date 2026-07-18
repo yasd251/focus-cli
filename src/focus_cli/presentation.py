@@ -20,6 +20,7 @@ from .storage import FocusStorage
 ACCENT_RED = "\x1b[38;2;239;68;68m"
 TITLE_GOLD = "\x1b[38;2;251;191;36m"
 DATE_BLUE = "\x1b[38;2;148;163;184m"
+SUCCESS_GREEN = "\x1b[38;2;34;197;94m"
 MUTED = "\x1b[38;2;115;115;115m"
 BOLD = "\x1b[1m"
 RESET = "\x1b[0m"
@@ -446,12 +447,23 @@ class TimerDisplay:
             )
             hint_line = MUTED + hint_line + RESET
 
-        xp_line = f"{self.current_xp} XP".center(terminal_width)
+        completion_xp = self.session.planned_minutes + math.ceil(
+            self.session.planned_minutes * 0.20
+        )
+        xp_line = (
+            f"You currently have a total of {self.current_xp} XP"
+        ).center(terminal_width)
+        reward_line = (
+            "Finishing this focus session will give you "
+            f"+{completion_xp} XP"
+        ).center(terminal_width)
         if self.interactive:
             xp_line = BOLD + TITLE_GOLD + xp_line + RESET
+            reward_line = SUCCESS_GREEN + reward_line + RESET
 
         content = [
             xp_line,
+            reward_line,
             "",
             timer_line,
             "",
@@ -512,9 +524,14 @@ class TimerDisplay:
             self.stdout.write("\x1b[2J\x1b[H\x1b[?25l")
             self.stdout.flush()
         else:
+            completion_xp = self.session.planned_minutes + math.ceil(
+                self.session.planned_minutes * 0.20
+            )
             self.stdout.write(
                 f"Focus session started for {self.session.planned_minutes}m.\n"
-                f"Current XP: {self.current_xp}\n"
+                f"You currently have a total of {self.current_xp} XP\n"
+                "Finishing this focus session will give you "
+                f"+{completion_xp} XP\n"
                 f"{display_title(self.session.title)}\n"
             )
             self.stdout.flush()
