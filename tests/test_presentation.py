@@ -4,20 +4,27 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from focus_cli.model import Session
 from focus_cli.presentation import (
     TimerDisplay,
     display_title,
     format_clock,
+    format_date,
     format_elapsed,
     format_remaining_words,
+    format_session_datetime,
+    format_time,
+    profile_view,
 )
 from focus_cli.storage import FocusStorage
 
 
 class PresentationTests(unittest.TestCase):
+    class TtyBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
     def test_clock_formats(self) -> None:
         self.assertEqual(format_clock(59 * 60 + 42), "59:42")
         self.assertEqual(format_clock(100 * 60, show_hours=True), "01:40:00")
@@ -29,8 +36,85 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(format_elapsed(24), "24s")
         self.assertEqual(format_remaining_words(2 * 3600 + 18), "2h 0m 18s")
 
+    def test_date_has_readable_long_form(self) -> None:
+        self.assertRegex(format_date(100), r"^[A-Z][a-z]+, [A-Z][a-z]+ \d{1,2}, 1970$")
+
+    def test_session_datetime_uses_day_month_and_lowercase_meridiem(self) -> None:
+        rendered = format_session_datetime(100)
+        self.assertRegex(
+            rendered,
+            r"^[A-Z][a-z]+, \d{1,2} [A-Z][a-z]+ \d{4}, \d{1,2}:\d{2} (am|pm)$",
+        )
+
     def test_missing_title_has_display_fallback(self) -> None:
         self.assertEqual(display_title(None), "No description")
+
+    def test_empty_profile_has_avatar_xp_and_no_extra_statistics(self) -> None:
+        rendered = profile_view([], 0, 100, width=80)
+        self.assertIn("│  │ F │  │", rendered)
+        self.assertIn("0 XP", rendered)
+        self.assertIn("No focus sessions yet.", rendered)
+        self.assertNotIn("Total focus", rendered)
+
+    def test_live_input_preserves_characters_and_handles_backspace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            storage = FocusStorage(Path(directory) / "focus.db")
+            storage.initialize()
+            session = storage.create_session(25, None, 100).created
+            output = io.StringIO()
+            display = TimerDisplay(
+                storage,
+                session,
+                stdin=io.StringIO(),
+                stdout=output,
+            )
+
+            for character in "focus stqp\x7f\x7fop":
+                display._commands.put(character)
+            self.assertIsNone(display._read_command())
+            self.assertEqual(display._input_buffer, "focus stop")
+
+            display._render(100)
+            self.assertIn("> focus stop", output.getvalue())
+
+            display._commands.put("\n")
+            self.assertEqual(display._read_command(), "focus stop")
+            self.assertEqual(display._input_buffer, "")
+
+    def test_live_layout_is_centered_minimal_and_red_accented(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            storage = FocusStorage(Path(directory) / "focus.db")
+            storage.initialize()
+            previous = storage.create_session(10, "Previous work", -1_000).created
+            storage.complete_session(previous.id, -400)
+            session = storage.create_session(25, "Write the report", 100).created
+            output = self.TtyBuffer()
+            display = TimerDisplay(
+                storage,
+                session,
+                stdin=self.TtyBuffer(),
+                stdout=output,
+            )
+            display._input_buffer = "focus stop"
+
+            display._render(400)
+            rendered = output.getvalue()
+
+            self.assertIn("\x1b[38;2;239;68;68m", rendered)
+            self.assertIn("\x1b[38;2;251;191;36m", rendered)
+            self.assertIn("\x1b[38;2;148;163;184m", rendered)
+            self.assertIn("╭", rendered)
+            self.assertIn("12 XP", rendered)
+            self.assertIn("20:00", rendered)
+            self.assertIn("focus stop", rendered)
+            self.assertIn(format_date(session.started_at), rendered)
+            self.assertIn(f"Started {format_time(session.started_at)}", rendered)
+            self.assertNotIn("│  F  │", rendered)
+            self.assertNotIn("\x1b[38;2;248;113;113m", rendered)
+            self.assertNotIn("\x1b[38;2;153;27;27m", rendered)
+            self.assertLess(rendered.index("Write the report"), rendered.index("1970"))
+            self.assertNotIn("FOCUS SESSION", rendered)
+            self.assertNotIn("✓", rendered)
 
     def test_keyboard_interrupt_closes_display_but_keeps_session_active(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -85,11 +169,10 @@ class PresentationTests(unittest.TestCase):
                 stdin=io.StringIO(),
                 stdout=io.StringIO(),
                 now=lambda: next(times),
-                tick_seconds=1,
+                tick_seconds=0.001,
             )
 
-            with patch("focus_cli.presentation.time.sleep", return_value=None):
-                result = display.run()
+            result = display.run()
 
             self.assertEqual(result.session.status, "completed")
             self.assertEqual(result.session.actual_seconds, 60)

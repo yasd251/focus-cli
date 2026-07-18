@@ -16,21 +16,35 @@ from .presentation import (
     display_title,
     final_summary,
     format_remaining_words,
+    profile_view,
 )
 from .storage import FocusStorage, default_database_path
 
 
-HELP = """Focus CLI
+HELP = r"""
+  .-.                                               
+ /    \                                             
+ | .`. ;    .--.     .--.     ___  ___      .--.    
+ | |(___)  /    \   /    \   (   )(   )   /  _  \   
+ | |_     |  .-. ; |  .-. ;   | |  | |   . .' `. ;  
+(   __)   | |  | | |  |(___)  | |  | |   | '   | |  
+ | |      | |  | | |  |       | |  | |   _\_`.(___) 
+ | |      | |  | | |  | ___   | |  | |  (   ). '.   
+ | |      | '  | | |  '(   )  | |  ; '   | |  `\ |  
+ | |      '  `-' / '  `-' |   ' `-'  /   ; '._,' '  
+(___)      `.__.'   `.__,'     '.__.'     '.___.'                                                              
 
 A minimal focus timer that rewards completed sessions with XP.
 
 Usage:
   focus start <minutes> [options]
   focus stop
+  focus profile
 
 Commands:
   start    Start a focus session
   stop     Stop the active focus session
+  profile  Show your XP and all focus sessions
 
 Start options:
   -t, --title <text>    Describe what you are focusing on
@@ -40,6 +54,7 @@ Examples:
   focus start 25
   focus start 60 -t "Working on Math Möbius"
   focus stop
+  focus profile
 """
 
 START_USAGE = 'Usage:\n  focus start <minutes> [-t "description"]'
@@ -171,6 +186,24 @@ def _run_stop(storage: FocusStorage, stdout: TextIO) -> int:
     return 0
 
 
+def _run_profile(storage: FocusStorage, stdout: TextIO) -> int:
+    now = time.time()
+    recovered = storage.recover_expired(now)
+    if recovered is not None:
+        _print_recovered(recovered, stdout)
+    sessions = storage.all_sessions()
+    interactive = bool(getattr(stdout, "isatty", lambda: False)())
+    stdout.write(
+        profile_view(
+            sessions,
+            storage.total_xp(),
+            now,
+            interactive=interactive,
+        )
+    )
+    return 0
+
+
 def main(
     argv: Optional[Sequence[str]] = None,
     *,
@@ -189,16 +222,17 @@ def main(
         return 0
 
     command = arguments[0]
-    if command not in {"start", "stop"}:
+    if command not in {"start", "stop", "profile"}:
         stderr.write(
             f"Error: Unknown command: {command}\n\n"
             "Run `focus --help` for usage.\n"
         )
         return 2
-    if command == "stop" and len(arguments) != 1:
+    if command in {"stop", "profile"} and len(arguments) != 1:
+        usage = f"focus {command}"
         stderr.write(
-            "Error: The stop command does not accept arguments.\n\n"
-            "Usage:\n  focus stop\n"
+            f"Error: The {command} command does not accept arguments.\n\n"
+            f"Usage:\n  {usage}\n"
         )
         return 2
 
@@ -219,7 +253,9 @@ def main(
         # introducing a race between separate processes.
         if command == "start":
             return _run_start(start_options, storage, stdin=stdin, stdout=stdout)
-        return _run_stop(storage, stdout)
+        if command == "stop":
+            return _run_stop(storage, stdout)
+        return _run_profile(storage, stdout)
     except (OSError, sqlite3.Error):
         path = database_path or default_database_path()
         stderr.write(

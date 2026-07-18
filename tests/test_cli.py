@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from focus_cli import cli
+from focus_cli.presentation import format_session_datetime
 from focus_cli.storage import FocusStorage
 
 
@@ -34,6 +35,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("focus start <minutes> [options]", stdout)
         self.assertIn("focus stop", stdout)
+        self.assertIn("focus profile", stdout)
         self.assertIn("--title", stdout)
         self.assertEqual(stderr, "")
 
@@ -47,6 +49,11 @@ class CliTests(unittest.TestCase):
         code, _, stderr = self.run_cli(["stop", "now"])
         self.assertEqual(code, 2)
         self.assertIn("does not accept arguments", stderr)
+
+    def test_profile_arguments_exit_two(self) -> None:
+        code, _, stderr = self.run_cli(["profile", "extra"])
+        self.assertEqual(code, 2)
+        self.assertIn("profile command does not accept arguments", stderr)
 
     def test_duration_validation(self) -> None:
         invalid = ["zero", "-20", "0", "1.5", "60m", "1441"]
@@ -145,6 +152,48 @@ class CliTests(unittest.TestCase):
         self.assertIn("XP earned:   +2 XP", stdout)
         self.assertIn("Recovered work", stdout)
         self.assertEqual(stderr, "")
+
+    def test_profile_shows_avatar_xp_and_every_session_status(self) -> None:
+        storage = FocusStorage(self.path)
+        storage.initialize()
+
+        completed = storage.create_session(10, "Finished work", 100).created
+        storage.complete_session(completed.id, 700)
+        storage.create_session(10, "Stopped work", 800)
+        storage.stop_active(920)
+        storage.create_session(25, "Current work", 1_000)
+
+        with patch("focus_cli.cli.time.time", return_value=1_010):
+            code, stdout, stderr = self.run_cli(["profile"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("│  │ F │  │", stdout)
+        self.assertIn("14 XP", stdout)
+        self.assertIn("ACTIVE", stdout)
+        self.assertIn("COMPLETED", stdout)
+        self.assertIn("STOPPED", stdout)
+        self.assertIn("Current work", stdout)
+        self.assertIn("Finished work", stdout)
+        self.assertIn("Stopped work", stdout)
+        self.assertIn(f"Started: {format_session_datetime(1_000)}", stdout)
+        self.assertIn(f"Started: {format_session_datetime(800)}", stdout)
+        self.assertIn(f"Started: {format_session_datetime(100)}", stdout)
+        self.assertNotIn("Total focus", stdout)
+        self.assertNotIn("Sessions completed", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_profile_recovers_expired_session_before_counting_xp(self) -> None:
+        storage = FocusStorage(self.path)
+        storage.initialize()
+        storage.create_session(1, "Due work", 100)
+
+        with patch("focus_cli.cli.time.time", return_value=200):
+            code, stdout, _ = self.run_cli(["profile"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Recovered completed session.", stdout)
+        self.assertIn("2 XP", stdout)
+        self.assertIn("COMPLETED", stdout)
 
     def test_storage_failure_exits_one_with_actionable_path(self) -> None:
         impossible_path = self.path / "directory-is-file" / "focus.db"

@@ -143,7 +143,7 @@ class FocusStorage:
             return self._session(row) if row is not None else None
 
     def all_sessions(self) -> list[Session]:
-        """Return sessions for diagnostics and tests, newest first."""
+        """Return every focus session, newest first."""
 
         with closing(self._connect()) as connection:
             rows = connection.execute(
