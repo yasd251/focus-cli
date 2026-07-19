@@ -54,19 +54,3 @@ left unchanged.
 
 Run `focus --help` for the complete command summary.
 
-## Data
-
-Sessions are stored in SQLite at the standard per-user data location:
-
-- macOS: `~/Library/Application Support/focus/focus.db`
-- Linux: `~/.local/share/focus/focus.db` (or `$XDG_DATA_HOME/focus/focus.db`)
-- Windows: `%APPDATA%\focus\focus.db`
-
-For portable use or testing, set `FOCUS_DB_PATH` to a database filename, or
-set `FOCUS_DATA_DIR` to override its containing directory.
-
-## Development
-
-```bash
-python -m unittest discover -s tests -v
-```
