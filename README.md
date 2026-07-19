@@ -10,7 +10,7 @@ https://github.com/user-attachments/assets/064aa8d8-8f3b-4690-89ea-8d1bd48b73eb
 ## Install
 
 Focus CLI requires Python 3.9 or newer and has no third-party runtime
-dependencies.
+dependencies. Run the following command below in the root directory
 
 ```bash
 python3 -m pip install .
